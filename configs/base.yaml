@@ -9,6 +9,9 @@ output_dir: results/
 # --- Environnement ---
 env_name: Go1JoystickFlatTerrain
 episode_length: 1000
+# Moteur physique : "jax" (MJX, marche partout, y compris sur Mac)
+# ou "warp" (MuJoCo Warp, GPU NVIDIA uniquement, défaut de Playground).
+impl: jax
 
 # --- Budget d'entraînement ---
 seed: 0

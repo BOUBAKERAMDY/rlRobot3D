@@ -35,6 +35,7 @@ class Config:
     output_dir: str
     env_name: str
     episode_length: int
+    impl: str
     seed: int
     num_timesteps: int
     num_envs: int
