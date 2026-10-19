@@ -1,0 +1,40 @@
+# Configuration de base d'un entraînement PPO du Go1.
+# Chaque expérience part de ce fichier ; on change une valeur avec un override
+# en ligne de commande, ex. `seed=3` ou `ppo.learning_rate=1e-4`.
+
+# --- Identification du run ---
+run_name: go1_baseline
+output_dir: results/
+
+# --- Environnement ---
+env_name: Go1JoystickFlatTerrain
+episode_length: 1000
+
+# --- Budget d'entraînement ---
+seed: 0
+num_timesteps: 200_000_000
+num_envs: 8192
+num_evals: 10
+
+# --- Interrupteurs des expériences (politiques A/B/C/D) ---
+domain_randomization: true
+privileged_critic: true
+
+# --- Hyperparamètres PPO ---
+# Valeurs reprises de
+# mujoco_playground.config.locomotion_params.brax_ppo_config("Go1JoystickFlatTerrain")
+ppo:
+  learning_rate: 3.0e-4
+  entropy_cost: 0.01
+  discounting: 0.97
+  unroll_length: 20
+  batch_size: 256
+  num_minibatches: 32
+  num_updates_per_batch: 4
+  num_resets_per_eval: 10
+  reward_scaling: 1.0
+  normalize_observations: true
+  max_grad_norm: 1.0
+  action_repeat: 1
+  policy_hidden_layer_sizes: [512, 256, 128]
+  value_hidden_layer_sizes: [512, 256, 128]
