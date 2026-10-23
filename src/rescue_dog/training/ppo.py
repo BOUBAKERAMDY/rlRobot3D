@@ -9,13 +9,24 @@ L'acteur lit toujours "state".
 
 from __future__ import annotations
 
+import dataclasses
 import functools
+import json
+import time
+from pathlib import Path
 from typing import Any
 
 from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo import train as ppo
 from mujoco_playground import registry, wrapper
 
+from rescue_dog.envs.go1 import make_env, make_eval_env
 from rescue_dog.utils.config import Config
+
+
+def run_dir(cfg: Config) -> Path:
+    """Dossier du run : `output_dir/run_name`, en absolu (orbax refuse les chemins relatifs)."""
+    return (Path(cfg.output_dir) / cfg.run_name).resolve()
 
 
 def make_network_factory(cfg: Config) -> functools.partial:
@@ -59,3 +70,41 @@ def make_train_kwargs(cfg: Config) -> dict[str, Any]:
         "randomization_fn": randomization_fn,
         "wrap_env_fn": wrapper.wrap_for_brax_training,
     }
+
+
+def train(cfg: Config) -> Path:
+    """Entraîne une politique et renvoie le dossier du run.
+
+    Le dossier contient `config.json` (la config utilisée), `metrics.jsonl`
+    (une ligne par évaluation) et `checkpoints/<pas>/` (une par évaluation).
+    """
+    out = run_dir(cfg)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
+    metrics_path = out / "metrics.jsonl"
+    metrics_path.write_text("")
+
+    env, _ = make_env(cfg)
+    eval_env, _ = make_eval_env(cfg)
+
+    start = time.monotonic()
+
+    def progress(num_steps: int, metrics: dict[str, Any]) -> None:
+        row = {"step": int(num_steps), "time": time.monotonic() - start}
+        row.update({k: float(v) for k, v in metrics.items()})
+        with open(metrics_path, "a") as f:
+            f.write(json.dumps(row) + "\n")
+        print(
+            f"[{row['time'] / 60:6.1f} min] pas {num_steps:>12,} "
+            f"récompense {row.get('eval/episode_reward', float('nan')):8.2f}",
+            flush=True,
+        )
+
+    ppo.train(
+        environment=env,
+        eval_env=eval_env,
+        progress_fn=progress,
+        save_checkpoint_path=out / "checkpoints",
+        **make_train_kwargs(cfg),
+    )
+    return out
