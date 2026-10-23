@@ -9,6 +9,8 @@ dependencies = [
     # brax 0.14.2 utilise jax.device_put_replicated, supprimé dans jax 0.10
     "jax<0.10",
     "pyyaml",
+    "imageio-ffmpeg>=0.6.0",
+    "mediapy>=1.2.7",
 ]
 
 [project.optional-dependencies]
