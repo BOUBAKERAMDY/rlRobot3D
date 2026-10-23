@@ -58,6 +58,11 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Config:
     return _build(Config, raw, prefix="")
 
 
+def config_from_dict(raw: dict[str, Any]) -> Config:
+    """Reconstruit une Config depuis un dict, ex. le `config.json` d'un run."""
+    return _build(Config, raw, prefix="")
+
+
 def _apply_override(raw: dict[str, Any], override: str) -> None:
     key, sep, value = override.partition("=")
     if not sep or not key:
