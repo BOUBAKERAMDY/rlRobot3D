@@ -16,6 +16,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from brax.training import types
+from brax.training.acme import running_statistics
+from brax.training.agents.ppo import checkpoint
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from mujoco_playground import registry, wrapper
@@ -108,3 +111,32 @@ def train(cfg: Config) -> Path:
         **make_train_kwargs(cfg),
     )
     return out
+
+
+def latest_checkpoint(out: Path) -> Path:
+    """Checkpoint du dernier pas enregistré dans `out/checkpoints`."""
+    steps = sorted((out / "checkpoints").iterdir(), key=lambda p: int(p.name))
+    if not steps:
+        raise FileNotFoundError(f"Aucun checkpoint dans {out / 'checkpoints'}")
+    return steps[-1]
+
+
+def load_policy(
+    cfg: Config, checkpoint_dir: Path, observation_size: Any, action_size: int
+):
+    """Politique déterministe `(obs, rng) -> (action, extras)` d'un checkpoint.
+
+    On reconstruit le réseau depuis notre config plutôt qu'avec
+    `brax...checkpoint.load_policy`, qui plante dans brax 0.14.2 en relisant
+    son propre `ppo_network_config.json` (initialiseur `null`).
+    """
+    preprocess = (
+        running_statistics.normalize
+        if cfg.ppo.normalize_observations
+        else types.identity_observation_preprocessor
+    )
+    network = make_network_factory(cfg)(
+        observation_size, action_size, preprocess_observations_fn=preprocess
+    )
+    params = checkpoint.load(checkpoint_dir.resolve())
+    return ppo_networks.make_inference_fn(network)(params, deterministic=True)
