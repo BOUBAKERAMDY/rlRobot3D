@@ -1,0 +1,23 @@
+# Échoue si un push ou une pull request vient d'un autre compte que
+# BOUBAKERAMDY ou MehdiKartoucha.
+name: Auteurs autorisés
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vérifier le compte qui pousse
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          case "${ACTOR,,}" in
+            boubakeramdy|mehdikartoucha)
+              echo "Autorisé : $ACTOR" ;;
+            *)
+              echo "::error::$ACTOR n'est pas autorisé à pousser sur ce dépôt"
+              exit 1 ;;
+          esac
