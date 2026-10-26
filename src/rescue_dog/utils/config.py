@@ -40,6 +40,7 @@ class Config:
     num_timesteps: int
     num_envs: int
     num_evals: int
+    scenario: str
     domain_randomization: bool
     privileged_critic: bool
     ppo: PPOConfig
@@ -59,8 +60,12 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Config:
 
 
 def config_from_dict(raw: dict[str, Any]) -> Config:
-    """Reconstruit une Config depuis un dict, ex. le `config.json` d'un run."""
-    return _build(Config, raw, prefix="")
+    """Reconstruit une Config depuis un dict, ex. le `config.json` d'un run.
+
+    Les runs antérieurs aux scénarios n'ont pas de clé `scenario` : ils ont été
+    entraînés sans scénario.
+    """
+    return _build(Config, {"scenario": "aucun", **raw}, prefix="")
 
 
 def _apply_override(raw: dict[str, Any], override: str) -> None:
