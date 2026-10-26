@@ -2,7 +2,8 @@
 
 Les deux interrupteurs de la config choisissent la politique (A/B/C/D) :
 - `domain_randomization` : friction, masses et frottements tirés à chaque
-  environnement avec le randomiseur de Playground.
+  environnement, avec le randomiseur du scénario (`scenarios/`) ou, sans
+  scénario, celui de Playground.
 - `privileged_critic` : le critique lit "privileged_state" au lieu de "state".
 L'acteur lit toujours "state".
 """
@@ -24,6 +25,7 @@ from brax.training.agents.ppo import train as ppo
 from mujoco_playground import registry, wrapper
 
 from rescue_dog.envs.go1 import make_env, make_eval_env
+from rescue_dog.scenarios import TRAINING
 from rescue_dog.utils.config import Config
 
 
@@ -46,11 +48,12 @@ def make_network_factory(cfg: Config) -> functools.partial:
 def make_train_kwargs(cfg: Config) -> dict[str, Any]:
     """Arguments de `brax...ppo.train`, sans l'environnement ni les callbacks."""
     p = cfg.ppo
-    randomization_fn = (
-        registry.get_domain_randomizer(cfg.env_name)
-        if cfg.domain_randomization
-        else None
-    )
+    if not cfg.domain_randomization:
+        randomization_fn = None
+    elif cfg.scenario in TRAINING:
+        randomization_fn = TRAINING[cfg.scenario].randomize
+    else:
+        randomization_fn = registry.get_domain_randomizer(cfg.env_name)
     return {
         "num_timesteps": cfg.num_timesteps,
         "num_envs": cfg.num_envs,
