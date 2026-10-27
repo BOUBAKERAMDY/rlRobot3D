@@ -18,7 +18,7 @@ def env():
 
 def test_sizes(env):
     assert env.action_size == 12
-    assert env.observation_size == {"state": (48,), "privileged_state": (123,)}
+    assert env.observation_size == {"state": (48,), "privileged_state": (129,)}
 
 
 def test_reset_and_step(env):
@@ -31,7 +31,7 @@ def test_reset_and_step(env):
         action = jax.random.uniform(key, (env.action_size,), minval=-1.0, maxval=1.0)
         state = step(state, action)
     assert state.obs["state"].shape == (48,)
-    assert state.obs["privileged_state"].shape == (123,)
+    assert state.obs["privileged_state"].shape == (129,)
     assert jp.all(jp.isfinite(state.obs["state"]))
     assert jp.all(jp.isfinite(state.obs["privileged_state"]))
 
@@ -40,3 +40,8 @@ def test_config_applied():
     _, env_cfg = make_env(load_config(BASE, ["episode_length=500"]))
     assert env_cfg.episode_length == 500
     assert env_cfg.impl == "jax"
+
+
+def test_without_scenario_is_playground():
+    env, _ = make_env(load_config(BASE, ["scenario=aucun"]))
+    assert env.observation_size["privileged_state"] == (123,)
