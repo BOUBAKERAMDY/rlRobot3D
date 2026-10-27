@@ -34,6 +34,7 @@ CAPSULE = mujoco.mjtGeom.mjGEOM_CAPSULE
 ELLIPSOID = mujoco.mjtGeom.mjGEOM_ELLIPSOID
 SPHERE = mujoco.mjtGeom.mjGEOM_SPHERE
 MESH = mujoco.mjtGeom.mjGEOM_MESH
+HFIELD = mujoco.mjtGeom.mjGEOM_HFIELD
 
 
 # --- Textures procédurales (aucun fichier image à versionner) ---
@@ -107,6 +108,32 @@ def _snow(rng: np.random.Generator, size: int = 256) -> np.ndarray:
 
 def _rust(rng: np.random.Generator, size: int = 256) -> np.ndarray:
     return _mix(_noise(rng, size), (70, 34, 20), (128, 60, 28), (170, 96, 52))
+
+
+def _facade(rng: np.random.Generator, size: int = 256) -> np.ndarray:
+    """Façade de béton sale, 4 × 4 fenêtres noires, quelques-unes éclairées."""
+    wall = _mix(
+        _noise(rng, size, octaves=4), (88, 80, 80), (128, 118, 112), (150, 140, 132)
+    )
+    cell = size // 4
+    for i in range(4):
+        for j in range(4):
+            r0, c0 = i * cell + cell // 4, j * cell + cell // 4
+            lit = rng.random() < 0.07
+            color = (225, 125, 50) if lit else (18, 16, 20)
+            wall[r0 : r0 + cell // 2, c0 : c0 + cell // 2] = color
+    return wall
+
+
+def _rock(rng: np.random.Generator, *colors, size: int = 512) -> np.ndarray:
+    """Roche striée : bruit fractal étiré, pour les montagnes lointaines."""
+    strata = _noise(rng, size, octaves=5)
+    strata = (
+        0.6 * strata
+        + 0.4 * np.sin(np.linspace(0, 40 * np.pi, size))[:, None] * 0.5
+        + 0.2
+    )
+    return _mix(np.clip(strata, 0, 1), *colors)
 
 
 # --- Petits outils MjSpec ---
@@ -191,26 +218,192 @@ def _cone_mesh(spec: mujoco.MjSpec, name: str, radius: float, height: float, n=2
     spec.add_mesh(name=name, uservert=np.ravel(verts).tolist())
 
 
+# --- Ciel peint : dégradé, soleil et nuages dans la texture du skybox ---
+
+SKY_SIZE = 512  # pixels par face du cube
+
+
+def _sky_directions(size: int) -> np.ndarray:
+    """Direction (monde, z vers le haut) de chaque pixel des 6 faces empilées.
+
+    Les faces suivent la convention des cube maps OpenGL (+X, -X, +Y, -Y, +Z,
+    -Z, axe Y vers le haut), que MuJoCo affiche avec z vers le haut :
+    (x, y, z) monde = (X, -Z, Y) OpenGL. Vérifié par un rendu de test.
+    """
+    c = (np.arange(size) + 0.5) / size * 2 - 1
+    s, t = np.meshgrid(c, c)
+    one = np.ones_like(s)
+    faces = [
+        (one, -t, -s),
+        (-one, -t, s),
+        (s, one, t),
+        (s, -one, -t),
+        (s, -t, one),
+        (-s, -t, -one),
+    ]
+    gl = np.concatenate([np.stack(f, -1) for f in faces])
+    d = np.stack([gl[..., 0], -gl[..., 2], gl[..., 1]], -1)
+    return d / np.linalg.norm(d, axis=-1, keepdims=True)
+
+
+def _sample(tex: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Lecture bilinéaire d'une texture qui boucle, coordonnées en pixels."""
+    n = tex.shape[0]
+    u0, v0 = np.floor(u).astype(int), np.floor(v).astype(int)
+    fu, fv = u - u0, v - v0
+    a = tex[v0 % n, u0 % n] * (1 - fu) + tex[v0 % n, (u0 + 1) % n] * fu
+    b = tex[(v0 + 1) % n, u0 % n] * (1 - fu) + tex[(v0 + 1) % n, (u0 + 1) % n] * fu
+    return a * (1 - fv) + b * fv
+
+
+def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
+    t = np.clip((x - e0) / (e1 - e0), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def _paint_sky(
+    spec: mujoco.MjSpec,
+    rng: np.random.Generator,
+    zenith,
+    horizon,
+    sun_dir,
+    sun_color,
+    cloud_lit,
+    cloud_shadow,
+    cloud_cover: float,
+    glow: float,
+) -> None:
+    """Remplace le dégradé du skybox par un ciel peint, en RGB 0-1."""
+    d = _sky_directions(SKY_SIZE)
+    z = d[..., 2]
+    sun = np.asarray(sun_dir, dtype=float)
+    sun /= np.linalg.norm(sun)
+    cos_sun = d @ sun
+
+    # Dégradé vertical, plus clair et plus chaud autour du soleil.
+    t = _smoothstep(-0.05, 0.6, z) ** 0.6
+    sky = _mix(t, np.multiply(horizon, 255), np.multiply(zenith, 255)) / 255
+    halo = np.exp((cos_sun - 1) * 8)[..., None]
+    sky = sky + glow * 0.35 * halo * np.asarray(sun_color)
+
+    # Nuages : bruit fractal projeté sur un plafond nuageux plat.
+    noise = _noise(rng, 512, octaves=7)
+    detail = _noise(rng, 512, octaves=5)
+    up = np.maximum(z, 0.02)
+    u = d[..., 0] / up * 140 + 1000
+    v = d[..., 1] / up * 140 + 1000
+    n = 0.75 * _sample(noise, u, v) + 0.25 * _sample(detail, 2.3 * u, 2.3 * v)
+    density = _smoothstep(1 - cloud_cover, 1 - cloud_cover + 0.22, n)
+    density *= _smoothstep(0.03, 0.22, z)  # les nuages s'effacent à l'horizon
+    shade = _smoothstep(0.35, 1.0, n)[..., None]
+    toward_sun = np.clip(cos_sun, 0, 1)[..., None] ** 4
+    cloud = (
+        _mix(shade[..., 0], np.multiply(cloud_shadow, 255), np.multiply(cloud_lit, 255))
+        / 255
+    )
+    cloud = cloud + 0.5 * toward_sun * np.asarray(sun_color)  # liseré doré
+    sky = sky * (1 - 0.92 * density[..., None]) + cloud * 0.92 * density[..., None]
+
+    # Disque du soleil et éclat serré, par-dessus les nuages.
+    disc = _smoothstep(np.cos(np.deg2rad(1.6)), np.cos(np.deg2rad(1.1)), cos_sun)[
+        ..., None
+    ]
+    sky = sky + glow * np.exp((cos_sun - 1) * 900)[..., None] * np.asarray(sun_color)
+    sky = np.maximum(sky, disc * np.array([1.0, 0.98, 0.94]))
+
+    sky = np.where((z < 0)[..., None], np.asarray(horizon), sky)  # sous l'horizon
+    for tex in spec.textures:
+        if tex.type == mujoco.mjtTexture.mjTEXTURE_SKYBOX:
+            tex.builtin = mujoco.mjtBuiltin.mjBUILTIN_NONE
+            tex.width, tex.height, tex.nchannel = SKY_SIZE, 6 * SKY_SIZE, 3
+            tex.data = _to_bytes(np.clip(sky, 0, 1) * 255)
+
+
+# --- Montagnes lointaines : champs de hauteur purement visuels ---
+
+
+def _ridges(rng: np.random.Generator, size: int) -> np.ndarray:
+    """Relief de crêtes dans [0, 1] : bruit « ridged », pics plus pointus."""
+    ridged = 1 - np.abs(2 * _noise(rng, size, octaves=7) - 1)
+    return 0.55 * ridged**2.2 + 0.45 * _noise(rng, size, octaves=4) * ridged
+
+
+def _mountains(
+    spec: mujoco.MjSpec,
+    rng: np.random.Generator,
+    height: float,
+    material: str,
+    inner: float = 110.0,
+    outer: float = 200.0,
+    half_size: float = 420.0,
+    snow_line: float | None = None,
+    snow_material: str = "",
+) -> None:
+    """Chaîne de montagnes en anneau autour de la scène.
+
+    Le relief est nul jusqu'au rayon `inner` (et caché sous le sol), puis monte
+    jusqu'à `outer`. Avec `snow_line`, un second champ de hauteur identique
+    au-dessus de cette altitude, surélevé de quelques mètres, pose des neiges
+    éternelles exactement sur les sommets (MuJoCo normalise les deux reliefs
+    par leur maximum, commun).
+    """
+    n = 320
+    xs = np.linspace(-half_size, half_size, n)
+    x, y = np.meshgrid(xs, xs)
+    ring = _smoothstep(inner, outer, np.hypot(x, y))
+    h = ring * (0.15 + 0.85 * _ridges(rng, n))
+    h /= h.max()
+    # La roche part de 3 m sous le sol ; la neige, 2,8 m plus haut, reste
+    # elle aussi sous le sol là où il n'y en a pas (relief nul).
+    layers = [("montagnes", h, material, -3.0)]
+    if snow_line is not None:
+        snow = np.where(h > snow_line, h, 0.0)
+        layers.append(("neiges_eternelles", snow, snow_material, -0.2))
+    for name, data, mat, z in layers:
+        spec.add_hfield(
+            name=name,
+            size=[half_size, half_size, height, 1.0],
+            nrow=n,
+            ncol=n,
+            userdata=data.ravel().tolist(),
+        )
+        _deco(spec.worldbody, HFIELD, (), (0, 0, z), mat, hfieldname=name)
+
+
 # --- Ambiance commune ---
 
 
-def _atmosphere(
-    spec: mujoco.MjSpec, sky_top, sky_bottom, fog, fog_range, ambient=0.3
-) -> None:
-    for tex in spec.textures:
-        if tex.type == mujoco.mjtTexture.mjTEXTURE_SKYBOX:
-            tex.builtin = mujoco.mjtBuiltin.mjBUILTIN_GRADIENT
-            tex.rgb1, tex.rgb2 = list(sky_top), list(sky_bottom)
-    spec.visual.rgba.fog = list(fog) + [1]
-    spec.visual.rgba.haze = list(fog) + [1]
-    spec.visual.map.fogstart, spec.visual.map.fogend = fog_range
-    spec.visual.map.haze = 0.6
+def _atmosphere(spec: mujoco.MjSpec, horizon, ambient=0.3, haze: float = 0.35) -> None:
+    """Voile d'horizon, lumière ambiante et plan lointain.
+
+    Pas de brouillard MuJoCo : il s'applique aussi au skybox et noierait le
+    ciel peint. Les objets lointains pâlissent d'eux-mêmes (matériaux teintés
+    vers l'horizon, voir `_haze_material`). Les distances de MuJoCo sont en
+    unités de `extent` du modèle (0,8 m pour le Go1).
+    """
+    spec.visual.rgba.haze = list(horizon) + [1]
+    spec.visual.map.haze = haze
+    spec.visual.map.znear = 0.02
+    spec.visual.map.zfar = 3000
     spec.visual.headlight.ambient = [ambient] * 3
     spec.visual.headlight.diffuse = [0.35, 0.35, 0.35]
     spec.visual.headlight.specular = [0.1, 0.1, 0.1]
     spec.visual.quality.shadowsize = 8192
     spec.visual.global_.offwidth = 1920
     spec.visual.global_.offheight = 1080
+
+
+def _haze_material(
+    spec: mujoco.MjSpec, name: str, rgb, horizon, depth: float, **kw
+) -> None:
+    """Matériau d'un objet lointain : sa couleur fondue dans l'horizon.
+
+    `depth` dans [0, 1] imite la perspective atmosphérique : 0 garde la
+    couleur, 1 la remplace par celle de l'horizon, qui brille (émission) pour
+    rester claire même à contre-jour.
+    """
+    color = (1 - depth) * np.asarray(rgb) + depth * np.asarray(horizon)
+    _material(spec, name, rgba=list(color) + [1], emission=depth, **kw)
 
 
 def _floor(spec: mujoco.MjSpec, texture: str, repeat: float, reflectance: float):
@@ -232,6 +425,7 @@ def _sun(spec: mujoco.MjSpec, direction, color, intensity=1.0) -> None:
         pos=(-d * 10).tolist(),
         diffuse=[c * intensity for c in color],
         specular=[0.3, 0.3, 0.3],
+        ambient=[0.18, 0.18, 0.2],
         castshadow=True,
     )
 
@@ -261,14 +455,39 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
     _material(spec, "gyrophare", rgba=(1.0, 0.15, 0.05, 1), emission=1.0)
     _cone_mesh(spec, "cone", radius=0.13, height=0.5)
 
-    _atmosphere(
-        spec,
-        sky_top=(0.32, 0.36, 0.45),
-        sky_bottom=(0.85, 0.62, 0.42),
-        fog=(0.62, 0.52, 0.44),
-        fog_range=(6, 40),
+    _texture(
+        spec, "roche_ocre", _rock(rng, (70, 46, 40), (128, 80, 58), (176, 120, 84))
     )
-    _sun(spec, direction=(0.3, 0.7, -0.5), color=(1.0, 0.8, 0.6), intensity=0.95)
+
+    # Fin d'après-midi poussiéreuse : soleil bas, en face de la caméra « cinema ».
+    sun = (-0.25, 1.0, 0.2)
+    horizon = (0.97, 0.66, 0.42)
+    _paint_sky(
+        spec,
+        rng,
+        zenith=(0.16, 0.2, 0.38),
+        horizon=horizon,
+        sun_dir=sun,
+        sun_color=(1.0, 0.76, 0.46),
+        cloud_lit=(1.0, 0.74, 0.52),
+        cloud_shadow=(0.42, 0.32, 0.4),
+        cloud_cover=0.5,
+        glow=1.0,
+    )
+    _atmosphere(spec, horizon, ambient=0.42, haze=0.45)
+    _sun(spec, direction=-np.asarray(sun), color=(1.0, 0.8, 0.6), intensity=1.1)
+    _haze_material(
+        spec,
+        "roche_ocre",
+        (0.55, 0.38, 0.32),
+        horizon,
+        0.45,
+        texture="roche_ocre",
+        texrepeat=(40, 40),
+        specular=0.0,
+    )
+    _mountains(spec, rng, height=34, material="roche_ocre")
+    _ruined_skyline(spec, rng, horizon, sun_azimuth=np.arctan2(sun[1], sun[0]))
 
     wb = spec.worldbody
     # Gravats de béton et de brique éparpillés de part et d'autre du couloir.
@@ -354,6 +573,58 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
         )
 
 
+def _ruined_skyline(
+    spec: mujoco.MjSpec, rng: np.random.Generator, horizon, sun_azimuth: float
+) -> None:
+    """Ville effondrée à l'horizon : immeubles éventrés, incendies et fumées.
+
+    Aucun immeuble devant le soleil, pour garder le contre-jour.
+    """
+    _texture(spec, "facade", _facade(rng))
+    facade = {"texture": "facade", "texuniform": True, "texrepeat": (0.09, 0.09)}
+    _haze_material(
+        spec, "immeuble", (0.5, 0.44, 0.46), horizon, 0.2, specular=0.0, **facade
+    )
+    _haze_material(
+        spec, "immeuble_clair", (0.7, 0.62, 0.6), horizon, 0.2, specular=0.0, **facade
+    )
+    _material(spec, "braise", rgba=(1.0, 0.45, 0.1, 1), emission=1.0)
+    _material(spec, "fumee", rgba=(0.4, 0.36, 0.36, 0.18), specular=0, emission=0.3)
+    wb = spec.worldbody
+    fires = []
+    for _ in range(46):
+        az = rng.uniform(-np.pi, np.pi)
+        if abs(np.angle(np.exp(1j * (az - sun_azimuth)))) < 0.28:
+            continue
+        r = rng.uniform(85, 150)
+        x, y = 8 + r * np.cos(az), r * np.sin(az)
+        w, depth, h = rng.uniform(4, 9), rng.uniform(4, 9), rng.uniform(8, 30)
+        mat = "immeuble" if rng.random() < 0.7 else "immeuble_clair"
+        yaw = _random_quat(rng, 0.0)
+        _deco(wb, BOX, (w, depth, h / 2), (x, y, h / 2), mat, yaw)
+        if rng.random() < 0.55:  # étage effondré, en biais sur le toit
+            _deco(
+                wb,
+                BOX,
+                (w * 0.8, depth * 0.9, 0.5),
+                (x, y, h + 0.8),
+                mat,
+                _random_quat(rng, 0.5),
+            )
+        if rng.random() < 0.25:
+            fires.append((x, y, h))
+    # Incendies sur les toits et colonnes de fumée poussées par le vent (+x).
+    for x, y, h in fires[:6]:
+        _deco(wb, SPHERE, (1.2,), (x, y, h + 0.6), "braise")
+        # Bouffées qui se chevauchent, grossissent et s'inclinent avec le vent.
+        for k in range(30):
+            t = k / 29
+            radius = 1.5 + 8 * t
+            center = (x + 30 * t**2, y + rng.normal(0, 1.5), h + 2 + 40 * t)
+            jitter = rng.normal(0, radius * 0.3, size=3)
+            _deco(wb, SPHERE, (radius,), tuple(np.add(center, jitter)), "fumee")
+
+
 # --- Décor : lac gelé ---
 
 
@@ -375,15 +646,57 @@ def _frozen_lake(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
     _material(spec, "ecorce", rgba=(0.24, 0.15, 0.09, 1), specular=0.05)
     _material(spec, "balise", rgba=(0.95, 0.15, 0.1, 1), specular=0.5, emission=0.3)
 
-    _atmosphere(
-        spec,
-        sky_top=(0.35, 0.5, 0.72),
-        sky_bottom=(0.86, 0.9, 0.96),
-        fog=(0.82, 0.87, 0.94),
-        fog_range=(8, 45),
-        ambient=0.45,
+    _texture(
+        spec, "roche_bleue", _rock(rng, (52, 58, 70), (92, 102, 118), (140, 150, 165))
     )
-    _sun(spec, direction=(-0.2, 0.7, -0.55), color=(0.95, 0.97, 1.0), intensity=0.9)
+
+    # Matin alpin : grand ciel bleu, cumulus et sommets enneigés.
+    sun = (0.55, 0.65, 0.5)
+    horizon = (0.8, 0.88, 0.97)
+    _paint_sky(
+        spec,
+        rng,
+        zenith=(0.12, 0.32, 0.72),
+        horizon=horizon,
+        sun_dir=sun,
+        sun_color=(1.0, 0.97, 0.9),
+        cloud_lit=(1.0, 1.0, 1.0),
+        cloud_shadow=(0.68, 0.74, 0.86),
+        cloud_cover=0.42,
+        glow=0.6,
+    )
+    _atmosphere(spec, horizon, ambient=0.45, haze=0.35)
+    _sun(spec, direction=-np.asarray(sun), color=(0.97, 0.98, 1.0), intensity=0.95)
+    _haze_material(
+        spec,
+        "roche_bleue",
+        (0.42, 0.47, 0.56),
+        horizon,
+        0.35,
+        texture="roche_bleue",
+        texrepeat=(40, 40),
+        specular=0.1,
+    )
+    _haze_material(
+        spec,
+        "neige_eternelle",
+        (0.95, 0.97, 1.0),
+        horizon,
+        0.15,
+        texture="neige",
+        texrepeat=(60, 60),
+    )
+    _mountains(
+        spec,
+        rng,
+        height=80,
+        material="roche_bleue",
+        inner=150,
+        outer=260,
+        snow_line=0.38,
+        snow_material="neige_eternelle",
+    )
+    _mountain_hut(spec)
 
     wb = spec.worldbody
     # Congères de neige sur les rives.
@@ -410,6 +723,30 @@ def _frozen_lake(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
     for x in np.arange(-4, 30, 4.0):
         for side in (-1, 1):
             _deco(wb, CYLINDER, (0.02, 0.4), (x, side * 1.3, 0.4), "balise")
+
+
+def _mountain_hut(spec: mujoco.MjSpec) -> None:
+    """Refuge de montagne au bout du couloir : la destination de la mission."""
+    _material(spec, "bois", rgba=(0.42, 0.26, 0.15, 1), specular=0.05)
+    _material(spec, "toit_rouge", rgba=(0.62, 0.1, 0.07, 1), specular=0.2)
+    _material(spec, "fenetre", rgba=(1.0, 0.78, 0.4, 1), emission=0.9)
+    _material(spec, "drapeau", rgba=(1.0, 0.42, 0.0, 1), emission=0.2)
+    wb = spec.worldbody
+    x, y = 26.0, 5.5
+    _deco(wb, BOX, (2.2, 1.6, 1.1), (x, y, 1.1), "bois")
+    for side in (-1, 1):  # toit à deux pans couvert de neige
+        q = [np.cos(0.32), -side * np.sin(0.32), 0, 0]
+        _deco(wb, BOX, (2.5, 1.0, 0.08), (x, y + side * 0.85, 2.55), "toit_rouge", q)
+        _deco(wb, BOX, (2.5, 1.0, 0.05), (x, y + side * 0.85, 2.66), "neige", q)
+    _deco(wb, BOX, (0.35, 0.02, 0.3), (x - 0.9, y - 1.61, 1.3), "fenetre")
+    _deco(wb, BOX, (0.35, 0.02, 0.3), (x + 0.9, y - 1.61, 1.3), "fenetre")
+    _deco(wb, BOX, (0.25, 0.25, 0.6), (x + 1.2, y + 0.6, 3.0), "bois")  # cheminée
+    for k in range(5):
+        r = 0.3 + 0.25 * k
+        _deco(wb, SPHERE, (r,), (x + 1.2 + 0.3 * k, y + 0.6, 3.8 + 0.7 * k), "neige")
+    # Mât et drapeau orange de l'équipe de secours.
+    _deco(wb, CYLINDER, (0.04, 2.5), (x - 3.0, y - 1.5, 2.5), "ecorce")
+    _deco(wb, BOX, (0.45, 0.01, 0.28), (x - 2.53, y - 1.5, 4.6), "drapeau")
 
 
 # --- Le chien ---
@@ -643,7 +980,7 @@ def render_frames(
     height: int = 480,
     width: int = 640,
 ) -> list[np.ndarray]:
-    """Images de `model` pour chaque `qpos`, avec brouillard, ombres et reflets."""
+    """Images de `model` pour chaque `qpos`, avec voile d'horizon, ombres et reflets."""
     renderer = mujoco.Renderer(model, height=height, width=width)
     data = mujoco.MjData(model)
     frames = []
@@ -652,7 +989,7 @@ def render_frames(
         mujoco.mj_forward(model, data)
         renderer.update_scene(data, camera=camera)
         flags = renderer.scene.flags
-        flags[mujoco.mjtRndFlag.mjRND_FOG] = True
+        flags[mujoco.mjtRndFlag.mjRND_FOG] = False
         flags[mujoco.mjtRndFlag.mjRND_HAZE] = True
         flags[mujoco.mjtRndFlag.mjRND_SHADOW] = True
         flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = True
