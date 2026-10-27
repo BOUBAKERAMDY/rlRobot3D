@@ -8,6 +8,11 @@ ne comptent plus.
 
 Métriques par condition :
 - `success` : part des épisodes sans chute pendant toute la durée ;
+- `mission` : part des épisodes sans chute ET où le chien a parcouru au moins
+  `MISSION_PROGRESS` de la distance demandée par la commande (un chien qui
+  reste planté sur place ne réussit pas sa mission) ;
+- `progress` : distance parcourue dans la direction commandée, en fraction de
+  la distance demandée (moyenne) ;
 - `falls` : nombre moyen de chutes par épisode (0 ou 1 ici) ;
 - `velocity_error` : écart moyen (m/s) entre la vitesse du tronc dans le plan
   et la commande, sur les pas avant la chute ;
@@ -29,6 +34,7 @@ from rescue_dog.training.ppo import load_policy
 from rescue_dog.utils.config import Config
 
 FALL_HEIGHT = 0.15  # m ; le tronc est à ~0.28 m debout
+MISSION_PROGRESS = 0.5  # fraction de la distance demandée
 
 
 def make_rollout(cfg: Config, checkpoint_dir: Path, steps: int):
@@ -46,6 +52,8 @@ def make_rollout(cfg: Config, checkpoint_dir: Path, steps: int):
         rng, key = jax.random.split(rng)
         state = env.reset(key)
         state.info["command"] = command
+        speed = jp.linalg.norm(command[:2])
+        direction = command[:2] / jp.maximum(speed, 1e-6)
 
         def body(carry, _):
             state, rng, alive = carry
@@ -60,14 +68,20 @@ def make_rollout(cfg: Config, checkpoint_dir: Path, steps: int):
                 alive * state.reward,
                 alive * jp.linalg.norm(vel - command[:2]),
                 alive.astype(jp.float32),
+                # Avancée dans la direction commandée (repère du robot).
+                alive * jp.dot(vel, direction) * env.dt,
             )
             return (state, rng, alive_after), out
 
-        (_, _, alive), (rewards, errors, counted) = jax.lax.scan(
+        (_, _, alive), (rewards, errors, counted, advance) = jax.lax.scan(
             body, (state, rng, jp.array(True)), None, length=steps
         )
+        asked = jp.linalg.norm(command[:2]) * steps * env.dt
+        progress = jp.where(asked > 0, advance.sum() / jp.maximum(asked, 1e-6), 1.0)
         return {
             "success": alive.astype(jp.float32),
+            "mission": (alive & (progress >= MISSION_PROGRESS)).astype(jp.float32),
+            "progress": progress,
             "return": rewards.sum(),
             "velocity_error": errors.sum() / jp.maximum(counted.sum(), 1.0),
         }
@@ -109,6 +123,8 @@ def evaluate(
             {
                 **condition,
                 "success": success,
+                "mission": float(np.asarray(out["mission"]).mean()),
+                "progress": float(np.asarray(out["progress"]).mean()),
                 "falls": 1.0 - success,
                 "velocity_error": float(np.asarray(out["velocity_error"]).mean()),
                 "return": float(np.asarray(out["return"]).mean()),

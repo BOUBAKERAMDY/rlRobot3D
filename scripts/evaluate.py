@@ -6,7 +6,7 @@ python scripts/evaluate.py results/glace_D --episodes 64 --command 1.0 0 0
 
 Sans `--scenario`, un run entraîné sur « tous » (ou sans scénario) est testé
 sur toutes les grilles. Écrit `eval_<scénario>.json` (une ligne par condition) et `eval_<scénario>.png`
-(heatmap du taux de réussite) dans le dossier du run.
+(heatmap du taux de mission réussie) dans le dossier du run.
 """
 
 import argparse
@@ -72,7 +72,7 @@ def evaluate_one(scenario: str) -> None:
     (args.run_dir / f"eval_{scenario}.json").write_text(json.dumps(out, indent=2))
 
     row_key, row_values, col_key, col_values = SCENARIOS[scenario].AXES
-    success = np.array([r["success"] for r in rows]).reshape(len(row_values), -1) * 100
+    success = np.array([r["mission"] for r in rows]).reshape(len(row_values), -1) * 100
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(success, cmap="Blues", vmin=0, vmax=100, origin="lower")
     for i in range(success.shape[0]):
@@ -83,13 +83,13 @@ def evaluate_one(scenario: str) -> None:
     ax.set_yticks(range(len(row_values)), [str(v) for v in row_values])
     ax.set_xlabel(LABELS[col_key])
     ax.set_ylabel(LABELS[row_key])
-    ax.set_title(f"{args.run_dir.name} : réussite (%), scénario {scenario}")
+    ax.set_title(f"{args.run_dir.name} : mission réussie (%), scénario {scenario}")
     fig.colorbar(im, ax=ax)
     fig.tight_layout()
     fig.savefig(args.run_dir / f"eval_{scenario}.png", dpi=150)
     plt.close(fig)
 
-    print(f"Scénario {scenario}")
+    print(f"Scénario {scenario} : mission réussie (debout 20 s et avance)")
     print(f"{LABELS[row_key]} \\ {LABELS[col_key]} : " + " ".join(map(str, col_values)))
     for value, line in zip(row_values, success):
         print(f"{value!s:>8} " + " ".join(f"{v:6.0f}%" for v in line))
