@@ -19,6 +19,13 @@ num_timesteps: 200_000_000
 num_envs: 8192
 num_evals: 10
 
+# --- Scénario (voir src/rescue_dog/scenarios/) ---
+# "aucun" : environnement et randomisation par défaut de Playground.
+# "glace" : friction du sol et charge randomisées, ξ dans l'état privilégié.
+# "patte" : une patte affaiblie (force 50 à 100 %), ξ dans l'état privilégié.
+# "tous" : les deux à la fois, pour chaque chien simulé.
+scenario: tous
+
 # --- Interrupteurs des expériences (politiques A/B/C/D) ---
 domain_randomization: true
 privileged_critic: true
