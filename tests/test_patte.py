@@ -55,3 +55,29 @@ def test_set_condition():
     )
     np.testing.assert_allclose(patte.privileged_params(model, nominal), [1, 1, 1, 0.2])
     assert len(patte.grid()) == 20
+
+
+
+def test_tous_randomizes_everything_at_once():
+    """Avec « tous », chaque chien a sa friction, sa charge et sa patte affaiblie."""
+    from rescue_dog.scenarios import glace, tous
+
+    cfg = load_config(BASE, ["scenario=tous", "domain_randomization=true"])
+    assert make_train_kwargs(cfg)["randomization_fn"] is tous.randomize
+    env, _ = make_env(cfg)
+    assert env.observation_size["privileged_state"] == (129,)
+    n = 32
+    wrapped = wrapper.wrap_for_brax_training(
+        env,
+        episode_length=10,
+        action_repeat=1,
+        randomization_fn=lambda m: tous.randomize(
+            m, jax.random.split(jax.random.PRNGKey(0), n)
+        ),
+    )
+    state = jax.jit(wrapped.reset)(jax.random.split(jax.random.PRNGKey(1), n))
+    xi = np.asarray(state.obs["privileged_state"][:, -6:])
+    friction, strength = xi[:, 0], xi[:, 2:]
+    assert friction.std() > 0.05
+    assert np.all((friction >= glace.TRAIN["friction"][0]) & (friction <= 1.0))
+    assert np.all(strength.min(axis=1) <= 1.0) and strength.min(axis=1).std() > 0.05
