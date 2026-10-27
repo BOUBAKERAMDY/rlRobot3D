@@ -201,12 +201,27 @@ def _random_quat(rng: np.random.Generator, tilt: float) -> list[float]:
     return out.tolist()
 
 
+# Côté y < 0, les caméras « cinema » et « panorama » suivent le chien jusqu'à
+# 4,2 m du couloir : aucun objet haut ne doit s'y trouver.
+CAMERA_SIDE_CLEAR = 4.6
+
+
 def _side_spot(
-    rng: np.random.Generator, x_range=(-8, 30), y_min=1.4, y_max=9.0
+    rng: np.random.Generator,
+    x_range=(-8, 30),
+    y_min=1.4,
+    y_max=9.0,
+    tall: bool = False,
 ) -> tuple[float, float]:
-    """Position hors du couloir où marche le chien (axe x, |y| < y_min)."""
+    """Position hors du couloir où marche le chien (axe x, |y| < y_min).
+
+    Un objet `tall` (plus haut que les caméras) évite aussi la bande où
+    passent les caméras, côté y < 0.
+    """
     x = rng.uniform(*x_range)
     y = rng.uniform(y_min, y_max) * rng.choice((-1, 1))
+    if tall and y < 0:
+        y = -max(-y, CAMERA_SIDE_CLEAR + rng.uniform(0, 2))
     return x, y
 
 
@@ -498,12 +513,12 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
         _deco(wb, BOX, s, (x, y, s[2] * 0.6), mat, _random_quat(rng, 0.5))
     # Dalles effondrées, inclinées contre le sol.
     for _ in range(18):
-        x, y = _side_spot(rng, y_min=2.5)
+        x, y = _side_spot(rng, y_min=2.5, tall=True)
         s = (rng.uniform(0.6, 1.4), rng.uniform(0.4, 0.9), 0.06)
         _deco(wb, BOX, s, (x, y, 0.3), "beton", _random_quat(rng, 0.7))
     # Piliers brisés, debout ou couchés.
     for _ in range(10):
-        x, y = _side_spot(rng, y_min=3)
+        x, y = _side_spot(rng, y_min=3, tall=True)
         h = rng.uniform(0.4, 1.6)
         if rng.random() < 0.5:
             _deco(
@@ -525,7 +540,7 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
             _deco(wb, CYLINDER, (0.18, h / 2), (x, y, 0.18), "beton", q_flat.tolist())
     # Barres d'armature rouillées qui dépassent.
     for _ in range(40):
-        x, y = _side_spot(rng, y_min=2)
+        x, y = _side_spot(rng, y_min=2, tall=True)
         L = rng.uniform(0.3, 0.9)
         _deco(
             wb,
@@ -544,7 +559,7 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
             _deco(wb, BOX, (0.17, 0.17, 0.012), (x, y, 0.012), "noir")
     # Barils, parfois renversés.
     for _ in range(14):
-        x, y = _side_spot(rng, y_min=1.8, y_max=6)
+        x, y = _side_spot(rng, y_min=1.8, y_max=6, tall=True)
         mat = "baril_jaune" if rng.random() < 0.6 else "baril_rouge"
         if rng.random() < 0.7:
             _deco(wb, CYLINDER, (0.28, 0.42), (x, y, 0.42), mat)
@@ -560,7 +575,7 @@ def _rubble_field(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
             _deco(wb, CYLINDER, (0.28, 0.42), (x, y, 0.28), mat, q.tolist())
     # Gyrophares rouges sur poteaux, avec une lumière ponctuelle.
     for i, x in enumerate((2.0, 12.0, 22.0)):
-        y = 2.6 * (1 if i % 2 else -1)
+        y = 2.6 if i % 2 else -5.2
         _deco(wb, CYLINDER, (0.03, 0.6), (x, y, 0.6), "noir")
         _deco(wb, SPHERE, (0.07,), (x, y, 1.25), "gyrophare")
         wb.add_light(
@@ -701,7 +716,7 @@ def _frozen_lake(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
     wb = spec.worldbody
     # Congères de neige sur les rives.
     for _ in range(70):
-        x, y = _side_spot(rng, y_min=3.5, y_max=12)
+        x, y = _side_spot(rng, y_min=3.5, y_max=12, tall=True)
         s = (rng.uniform(0.5, 1.8), rng.uniform(0.4, 1.2), rng.uniform(0.15, 0.5))
         _deco(wb, ELLIPSOID, s, (x, y, 0), "neige", _random_quat(rng, 0))
     # Blocs de glace brillants près du couloir.
