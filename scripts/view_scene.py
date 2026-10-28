@@ -20,7 +20,7 @@ from rescue_dog.visualization.scenes import (
     scene_model,
 )
 
-CAMERAS = ("cinema", "large", "rase")
+CAMERAS = ("cinema", "panorama", "large", "rase")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("scenario", nargs="?", default="normal", choices=SCENARIOS)

@@ -809,8 +809,10 @@ def _dog_livery(spec: mujoco.MjSpec) -> None:
     _material(spec, "lampe", rgba=(1.0, 0.97, 0.85, 1), emission=1.0)
 
     trunk = spec.body(go1_constants.ROOT_BODY)
-    _follow_camera(trunk, "cinema", offset=(1.5, -2.4, 0.9))
+    # « cinema » vise assez haut pour garder l'horizon (montagnes, soleil).
+    _follow_camera(trunk, "cinema", offset=(1.6, -2.6, 0.45), target=(0.0, 0.0, 0.18))
     _follow_camera(trunk, "large", offset=(-3.0, -4.5, 2.2))
+    _follow_camera(trunk, "panorama", offset=(-3.0, -4.2, 0.8), target=(2.0, 0.0, 0.35))
     _follow_camera(trunk, "rase", offset=(0.9, -0.7, -0.12), target=(0.0, 0.0, 0.0))
     # Gilet : plaque dorsale et deux flancs, avec bandes réfléchissantes.
     _deco(trunk, BOX, (0.13, 0.068, 0.008), (-0.01, 0, 0.062), "gilet")
