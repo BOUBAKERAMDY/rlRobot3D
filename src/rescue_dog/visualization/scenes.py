@@ -721,19 +721,27 @@ def _frozen_lake(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
         _deco(wb, ELLIPSOID, s, (x, y, 0), "neige", _random_quat(rng, 0))
     # Blocs de glace brillants près du couloir.
     for _ in range(30):
-        x, y = _side_spot(rng, y_min=1.6, y_max=5)
+        x, y = _side_spot(rng, y_min=1.6, y_max=5, tall=True)
         s = rng.uniform(0.1, 0.45, size=3)
         _deco(wb, BOX, s, (x, y, s[2] * 0.5), "bloc_glace", _random_quat(rng, 0.4))
-    # Sapins enneigés en lisière : trois étages de cônes et un tronc.
-    for i in range(45):
-        x, y = _side_spot(rng, y_min=6, y_max=14)
-        h = rng.uniform(1.8, 3.6)
-        _deco(wb, CYLINDER, (0.04 * h, 0.25 * h), (x, y, 0.25 * h), "ecorce")
-        for k, (r, z) in enumerate(((0.42, 0.22), (0.32, 0.45), (0.22, 0.66))):
-            name = f"sapin_{i}_{k}"
-            _cone_mesh(spec, name, radius=r * h, height=0.42 * h)
-            mat = "sapin_neige" if k == 2 else "sapin"
-            _deco(wb, MESH, (), (x, y, z * h), mat, meshname=name)
+    # Forêt de sapins enneigés : trois étages de cônes et un tronc. Quelques
+    # tailles de maillages, partagées par tous les arbres.
+    sizes = (1.8, 2.6, 3.4, 4.4, 5.6)
+    for i, h in enumerate(sizes):
+        for k, r in enumerate((0.42, 0.32, 0.22)):
+            _cone_mesh(spec, f"sapin_{i}_{k}", radius=r * h, height=0.42 * h)
+    for x_range, y_min, y_max, count in (
+        ((-8, 30), 6, 14, 45),
+        ((-30, 60), 14, 45, 140),
+    ):
+        for _ in range(count):
+            x, y = _side_spot(rng, x_range, y_min, y_max, tall=True)
+            i = rng.integers(len(sizes))
+            h = sizes[i]
+            _deco(wb, CYLINDER, (0.04 * h, 0.25 * h), (x, y, 0.25 * h), "ecorce")
+            for k, z in enumerate((0.22, 0.45, 0.66)):
+                mat = "sapin_neige" if k == 2 else "sapin"
+                _deco(wb, MESH, (), (x, y, z * h), mat, meshname=f"sapin_{i}_{k}")
     # Piquets de balisage rouges le long du couloir.
     for x in np.arange(-4, 30, 4.0):
         for side in (-1, 1):
