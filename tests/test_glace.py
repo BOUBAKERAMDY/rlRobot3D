@@ -2,6 +2,7 @@ from pathlib import Path
 
 import jax
 import numpy as np
+import pytest
 from mujoco_playground import wrapper
 
 from rescue_dog.envs.go1 import make_env
@@ -55,3 +56,16 @@ def test_set_condition():
     assert abs(float(added) - 5.0) < 1e-5
     assert len(glace.grid()) == 25
     assert glace.grid()[0] == {"friction": 0.1, "payload": 0.0}
+
+
+def test_parse_condition_and_training_domain():
+    from rescue_dog.scenarios import in_training, parse_condition
+
+    cond = parse_condition("glace", ["friction=0.1", "payload=5"])
+    assert cond == {"friction": 0.1, "payload": 5.0}
+    assert not in_training("glace", cond)
+    assert in_training("glace", {"friction": 0.7, "payload": 2.0})
+    with pytest.raises(ValueError):
+        parse_condition("glace", ["friction=0.1"])
+    with pytest.raises(ValueError):
+        parse_condition("glace", ["friction=0.1", "leg=FR"])

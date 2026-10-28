@@ -57,6 +57,14 @@ def test_set_condition():
     assert len(patte.grid()) == 20
 
 
+def test_parse_condition_and_training_domain():
+    from rescue_dog.scenarios import in_training, parse_condition
+
+    cond = parse_condition("patte", ["leg=FL", "strength=0.2"])
+    assert cond == {"leg": "FL", "strength": 0.2}
+    assert not in_training("patte", cond)
+    assert in_training("patte", {"leg": "RR", "strength": 0.8})
+
 
 def test_tous_randomizes_everything_at_once():
     """Avec « tous », chaque chien a sa friction, sa charge et sa patte affaiblie."""
