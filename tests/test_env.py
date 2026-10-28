@@ -45,3 +45,16 @@ def test_config_applied():
 def test_without_scenario_is_playground():
     env, _ = make_env(load_config(BASE, ["scenario=aucun"]))
     assert env.observation_size["privileged_state"] == (123,)
+
+
+def test_menagerie_downloaded_before_scenario_env(monkeypatch):
+    """Sur une machine neuve (Kaggle), les maillages du Go1 doivent être téléchargés."""
+    from mujoco_playground._src import mjx_env
+
+    calls = []
+    original = mjx_env.ensure_menagerie_exists
+    monkeypatch.setattr(
+        mjx_env, "ensure_menagerie_exists", lambda: (calls.append(1), original())
+    )
+    make_env(load_config(BASE, ["scenario=tous"]))
+    assert calls

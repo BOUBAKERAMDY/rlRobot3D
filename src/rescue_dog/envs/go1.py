@@ -26,6 +26,7 @@ import jax
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground import MjxEnv, registry
+from mujoco_playground._src import mjx_env
 from mujoco_playground._src.locomotion.go1 import joystick
 
 from rescue_dog.scenarios import TRAINING
@@ -76,6 +77,9 @@ def make_env(cfg: Config) -> tuple[MjxEnv, config_dict.ConfigDict]:
         raise ValueError(
             f"Scénario non géré pour {cfg.env_name}, choisir parmi {list(TASKS)}"
         )
+    # registry.load télécharge Menagerie (maillages du Go1) au premier usage ;
+    # on construit l'environnement nous-mêmes, donc on le fait ici.
+    mjx_env.ensure_menagerie_exists()
     env = RescueJoystick(
         TRAINING[cfg.scenario], task=TASKS[cfg.env_name], config=env_cfg
     )
