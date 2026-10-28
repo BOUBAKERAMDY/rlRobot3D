@@ -964,8 +964,13 @@ def scene_spec(
     xml_path: Path | str | None = None,
     injured_leg: str = "FR",
     seed: int = 0,
+    load: bool = False,
 ) -> mujoco.MjSpec:
-    """Spec MuJoCo de la scène Go1 habillée pour `scenario`."""
+    """Spec MuJoCo de la scène Go1 habillée pour `scenario`.
+
+    `load` ajoute la caisse de secours sur le dos dans n'importe quel décor
+    (le scénario de test « glace » combine sol glissant et charge).
+    """
     if scenario not in SCENARIOS:
         raise ValueError(f"Scénario inconnu {scenario!r}, choisir parmi {SCENARIOS}")
     if xml_path is None:
@@ -986,7 +991,7 @@ def scene_spec(
     else:
         _rubble_field(spec, rng)
     _dog_livery(spec)
-    if scenario == "charge_lourde":
+    if scenario == "charge_lourde" or load:
         _heavy_load(spec)
     if scenario == "patte_blessee":
         _injured_leg(spec, injured_leg)
